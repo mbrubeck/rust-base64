@@ -70,8 +70,6 @@ pub struct EncoderWriter<'a, W: 'a + Write> {
     output: [u8; BUF_SIZE],
     /// How much of `output` is occupied with encoded data that couldn't be written last time
     output_occupied_len: usize,
-    /// True iff padding / partial last chunk has been written.
-    finished: bool,
     /// panic safety: don't write again in destructor if writer panicked while we were writing to it
     panicked: bool,
 }
@@ -99,7 +97,6 @@ impl<'a, W: Write> EncoderWriter<'a, W> {
             extra_input_occupied_len: 0,
             output: [0u8; BUF_SIZE],
             output_occupied_len: 0,
-            finished: false,
             panicked: false,
         }
     }
@@ -116,11 +113,11 @@ impl<'a, W: Write> EncoderWriter<'a, W> {
     /// # Errors
     ///
     /// The first error that is not of [`ErrorKind::Interrupted`] will be returned.
-    pub fn finish(&mut self) -> Result<()> {
-        if self.finished {
-            return Ok(());
-        };
+    pub fn finish(mut self) -> Result<()> {
+        self.on_finish()
+    }
 
+    fn on_finish(&mut self) -> Result<()> {
         self.write_all_encoded_output()?;
 
         if self.extra_input_occupied_len > 0 {
@@ -138,7 +135,6 @@ impl<'a, W: Write> EncoderWriter<'a, W> {
             self.extra_input_occupied_len = 0;
         }
 
-        self.finished = true;
         Ok(())
     }
 
@@ -215,10 +211,6 @@ impl<'a, W: Write> Write for EncoderWriter<'a, W> {
     ///
     /// Any errors emitted by the delegate writer are returned.
     fn write(&mut self, input: &[u8]) -> Result<usize> {
-        if self.finished {
-            panic!("Cannot write more after calling finish()");
-        }
-
         if input.is_empty() {
             return Ok(0);
         }
@@ -349,7 +341,7 @@ impl<'a, W: Write> Drop for EncoderWriter<'a, W> {
     fn drop(&mut self) {
         if !self.panicked {
             // like `BufWriter`, ignore errors during drop
-            let _ = self.finish();
+            let _ = self.on_finish();
         }
     }
 }
